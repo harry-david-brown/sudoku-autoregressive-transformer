@@ -72,7 +72,7 @@ Device:    Apple MPS (M1-series Mac)
 Time:      ~9 hours
 ```
 
-The dataset is uniformly easy — all puzzles have 31–36 givens (avg 33.8). No hard puzzles in the training distribution.
+The dataset is uniformly easy. All puzzles have 31–36 givens (avg 33.8). No hard puzzles in the training distribution.
 
 ---
 
