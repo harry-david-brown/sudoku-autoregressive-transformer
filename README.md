@@ -27,7 +27,7 @@ The model uses a transformer decoder with a causal mask. Each cell attends only 
 
 
 ### Visualization
-
+```
 raw integers:     [0, 0, 3, 0, 2, ...]         shape [81]
 after embedding:  [[0.2,-0.5,...], ...]        shape [81, 128]
 after + position: [[0.3,-0.4,...], ...]        shape [81, 128]  ← combined
@@ -55,6 +55,7 @@ LOSS NUMBER          BACKWARD PASS              WEIGHT UPDATE
                      to this 2.34?              lower loss
                      
                      result: 1M gradients
+```
 
 ---
 
