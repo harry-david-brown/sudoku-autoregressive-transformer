@@ -6,7 +6,7 @@ Part of a project comparing autoregressive and diffusion-based approaches to con
 
 ## What This Is
 
-A standard autoregressive transformer trained to solve Sudoku puzzles token by token, left to right. No constraint rules are specified — only data.
+A standard autoregressive transformer trained to solve Sudoku puzzles token by token, left to right. No constraint rules are specified, only data.
 
 ---
 
@@ -23,7 +23,7 @@ A standard autoregressive transformer trained to solve Sudoku puzzles token by t
 | Output                | Linear(128, 10) → argmax
 | Total parameters      | 1,071,242
 
-The model uses a transformer decoder with a causal mask. Each cell attends only to cells to its left. Position is encoded by adding learned position embeddings to token embeddings before the transformer layers.
+The model uses a transformer decoder with a causal mask. Position is encoded by adding learned position embeddings to token embeddings before the transformer layers.
 
 
 ### Visualization
@@ -99,8 +99,4 @@ Puzzle accuracy: 11.88%
 97.8 | 98.3 | 98.8 | 99.0 | 99.2 | 99.4 | 99.4 | 99.5 | 99.6
 ```
 
-The gradient from A1 (85.6%) to I9 (99.6%) is direct evidence of the autoregressive weakness. Early cells are predicted with minimal context, late cells benefit from prior predictions.
-
-**Hard puzzle (17 givens — hard1 from Norvig):**
-
-The model produces an invalid solution with duplicate digits in rows, columns, and boxes. Completely out of distribution. Trained exclusively on 31–36 given puzzles.
+The gradient from A1 (85.6%) to I9 (99.6%) is evidence of the autoregressive weakness. Early cells are predicted with minimal context, late cells benefit from prior predictions.
