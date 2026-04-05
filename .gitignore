@@ -1,4 +1,3 @@
 .vscode/
 sudoku.csv
-*.pth
 *.DS_Store
