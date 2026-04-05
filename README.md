@@ -1,4 +1,4 @@
-# Sudoku Autoregressive Transformer — Baseline 2
+# Sudoku Autoregressive Transformer
 
 Part of a project comparing autoregressive and diffusion-based approaches to constraint satisfaction problems.
 
