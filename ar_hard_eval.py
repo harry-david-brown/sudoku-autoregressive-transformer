@@ -5,7 +5,7 @@ import time
 import random
 from torch.utils.data import TensorDataset, DataLoader
 
-HARD_DATASET_PATH = '/Users/harry/.cache/huggingface/hub/datasets--imone--sudoku-hard-v2/snapshots/58942f96baeb572ca3127e2a9e9c70f330783d6b/train.csv'
+HARD_DATASET_PATH = 'train.csv'
 
 def load_hard_dataset(path, n=None, min_rating=50):
     df = pd.read_csv(path, dtype=str)
