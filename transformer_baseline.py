@@ -2,23 +2,18 @@ import torch
 import torch.nn as nn
 import pandas as pd
 import time
-import random
 from torch.utils.data import TensorDataset, DataLoader
 
-HARD_DATASET_PATH = '/Users/harry/.cache/huggingface/hub/datasets--imone--sudoku-hard-v2/snapshots/58942f96baeb572ca3127e2a9e9c70f330783d6b/train.csv'
-
-def load_hard_dataset(path, n=None, min_rating=50):
+def load_dataset(path, n=None):
     df = pd.read_csv(path, dtype=str)
-    df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
-    df = df[df['rating'] > min_rating].copy()
-    print(f"Hard puzzles available (rating > {min_rating}): {len(df):,}")
+    puzzles = df['quizzes'].tolist()
+    solutions = df['solutions'].tolist()
     if n:
-        df = df.iloc[:n]
-    puzzles   = df['question'].tolist()
-    solutions = df['answer'].tolist()
-    X = torch.tensor([[0 if c == '.' else int(c) for c in p] for p in puzzles], dtype=torch.long)
-    Y = torch.tensor([[0 if c == '.' else int(c) for c in s] for s in solutions], dtype=torch.long)
-    return X, Y, df['rating'].iloc[:n if n else len(df)].tolist()
+        puzzles = puzzles[:n]
+        solutions = solutions[:n]
+    X = torch.tensor([[int(c) for c in p] for p in puzzles], dtype=torch.long)
+    Y = torch.tensor([[int(c) for c in s] for s in solutions], dtype=torch.long)
+    return X, Y
 
 
 class SudokuTransformer(nn.Module):
@@ -45,114 +40,109 @@ class SudokuTransformer(nn.Module):
         return self.output(x)
 
 
-def check_validity(grid):
-    digits = set('123456789')
-    violations = []
-    for r in range(9):
-        if set(grid[r*9:(r+1)*9]) != digits: violations.append(f'Row {r+1}')
-    for c in range(9):
-        if set(grid[c::9]) != digits: violations.append(f'Col {c+1}')
-    for br in range(3):
-        for bc in range(3):
-            box = [grid[(br*3+r)*9+(bc*3+c)] for r in range(3) for c in range(3)]
-            if set(box) != digits: violations.append(f'Box ({br+1},{bc+1})')
-    return violations
-
-
 # ── Setup ──────────────────────────────────────────────────────────────────────
 device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-puzzles, solutions, ratings = load_hard_dataset(HARD_DATASET_PATH, n=10000)
-print(f"Loaded {len(puzzles):,} hard puzzles")
-print(f"Rating range: {min(ratings):.0f} – {max(ratings):.0f}, mean {sum(ratings)/len(ratings):.1f}")
+puzzles, solutions = load_dataset('sudoku.csv', n=500000)
+dataset = TensorDataset(puzzles, solutions)
+loader = DataLoader(dataset, batch_size=64, shuffle=True)
 
 model = SudokuTransformer().to(device)
-model.load_state_dict(torch.load('sudoku_transformer.pth', map_location=device))
-model.eval()
 total_params = sum(p.numel() for p in model.parameters())
 print(f"Parameters: {total_params:,}")
 
-# ── Evaluation — one-shot ──────────────────────────────────────────────────────
-print("\n=== AR Transformer — Hard Puzzles (one-shot) ===")
+criterion = nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-sample_size = 1000
-indices = random.sample(range(len(puzzles)), sample_size)
-sample_puzzles   = [puzzles[i] for i in indices]
-sample_solutions = [solutions[i] for i in indices]
-sample_ratings   = [ratings[i] for i in indices]
+# ── Training ───────────────────────────────────────────────────────────────────
+num_epochs = 20
+for epoch in range(num_epochs):
+    model.train()
+    total_loss = 0
+    start = time.time()
+    for batch_puzzles, batch_solutions in loader:
+        batch_puzzles = batch_puzzles.to(device)
+        batch_solutions = batch_solutions.to(device)
+        optimizer.zero_grad()
+        output = model(batch_puzzles)
+        loss = criterion(output.permute(0, 2, 1), batch_solutions)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+    elapsed = time.time() - start
+    print(f"Epoch {epoch+1}/{num_epochs} — Loss: {total_loss/len(loader):.4f} — {elapsed:.0f}s")
 
-correct_cells   = 0
+torch.save(model.state_dict(), 'sudoku_transformer.pth')
+print("Model saved.")
+
+# ── Evaluation ─────────────────────────────────────────────────────────────────
+model.eval()
+correct_cells = 0
 correct_puzzles = 0
-total_cells     = 0
-total_violations = 0
-puzzles_with_violations = 0
+total_cells = 0
+total_puzzles = 0
 position_correct = torch.zeros(81)
-position_total   = torch.zeros(81)
+position_total = torch.zeros(81)
+
+failed_puzzles = []
 
 with torch.no_grad():
-    for puz, sol in zip(sample_puzzles, sample_solutions):
-        x = puz.unsqueeze(0).to(device)
-        output = model(x)
-        pred = output.argmax(dim=-1)[0]
+    for batch_puzzles, batch_solutions in loader:
+        batch_puzzles = batch_puzzles.to(device)
+        batch_solutions = batch_solutions.to(device)
+        output = model(batch_puzzles)
+        predictions = output.argmax(dim=-1)
+        cell_correct = (predictions == batch_solutions)
 
-        unknown = (puz == 0)
-        cell_correct = (pred.cpu() == sol) & unknown
         correct_cells += cell_correct.sum().item()
-        total_cells   += unknown.sum().item()
-        position_correct += cell_correct.float()
-        position_total   += unknown.float()
+        total_cells += batch_solutions.numel()
 
-        # keep givens in prediction
-        pred_str = ''
-        for i in range(81):
-            if puz[i].item() != 0:
-                pred_str += str(puz[i].item())
-            else:
-                pred_str += str(pred[i].item())
+        position_correct += cell_correct.cpu().sum(dim=0).float()
+        position_total += batch_solutions.shape[0]
 
-        v = check_validity(pred_str)
-        total_violations += len(v)
-        if v: puzzles_with_violations += 1
-        if pred_str == ''.join(str(s.item()) for s in sol):
-            correct_puzzles += 1
+        puzzle_correct = cell_correct.all(dim=-1)
+        correct_puzzles += puzzle_correct.sum().item()
+        total_puzzles += batch_solutions.shape[0]
 
-print(f"Cell accuracy:         {correct_cells/total_cells*100:.2f}%")
-print(f"Puzzle accuracy:       {correct_puzzles/sample_size*100:.2f}%")
-print(f"Puzzles w/ violations: {puzzles_with_violations}/{sample_size}")
-print(f"Avg violations:        {total_violations/sample_size:.2f}")
+        # collect failed puzzles for analysis
+        if len(failed_puzzles) < 10:
+            for i in range(batch_puzzles.shape[0]):
+                if not puzzle_correct[i] and len(failed_puzzles) < 10:
+                    failed_puzzles.append({
+                        'puzzle':     batch_puzzles[i].cpu(),
+                        'prediction': predictions[i].cpu(),
+                        'solution':   batch_solutions[i].cpu(),
+                    })
 
-print("\nPer-position accuracy (unknown cells only):")
-position_acc = (position_correct / position_total.clamp(min=1) * 100).tolist()
+print(f"\nCell accuracy:   {correct_cells/total_cells*100:.2f}%")
+print(f"Puzzle accuracy: {correct_puzzles/total_puzzles*100:.2f}%")
+
+# ── Position analysis ──────────────────────────────────────────────────────────
+position_acc = (position_correct / position_total * 100).tolist()
+print("\nAccuracy by board position (row by row):")
 for row in range(9):
-    print(' | '.join(f'{position_acc[row*9+col]:5.1f}' for col in range(9)))
+    accs = [f"{position_acc[row*9+col]:5.1f}" for col in range(9)]
+    print(" | ".join(accs))
 
-# ── Difficulty breakdown ───────────────────────────────────────────────────────
-print("\n=== Accuracy by difficulty tier ===")
-tiers = [(50, 100), (100, 200), (200, 465)]
-for low, high in tiers:
-    tier_indices = [i for i, r in enumerate(sample_ratings) if low < r <= high]
-    if not tier_indices:
-        print(f"  Rating {low}-{high}: no samples")
-        continue
-    tier_correct = 0
-    tier_total   = 0
-    tier_violations = 0
-    with torch.no_grad():
-        for i in tier_indices:
-            puz = sample_puzzles[i]
-            sol = sample_solutions[i]
-            x = puz.unsqueeze(0).to(device)
-            output = model(x)
-            pred = output.argmax(dim=-1)[0]
-            unknown = (puz == 0)
-            tier_correct += ((pred.cpu() == sol) & unknown).sum().item()
-            tier_total   += unknown.sum().item()
-            pred_str = ''.join(
-                str(puz[i].item()) if puz[i].item() != 0 else str(pred[i].item())
-                for i in range(81)
-            )
-            tier_violations += len(check_validity(pred_str))
-    print(f"  Rating {low}-{high} (n={len(tier_indices)}): "
-          f"Cell acc {tier_correct/tier_total*100:.1f}%, "
-          f"Avg violations {tier_violations/len(tier_indices):.1f}")
+# ── Failed puzzle analysis ─────────────────────────────────────────────────────
+def display_comparison(puzzle, prediction, solution):
+    rows = 'ABCDEFGHI'
+    print(f"{'PUZZLE':^27}   {'PREDICTION':^27}   {'SOLUTION':^27}")
+    for r in range(9):
+        p_row, pred_row, sol_row = [], [], []
+        for c in range(9):
+            idx = r * 9 + c
+            p_row.append(str(puzzle[idx].item()))
+            pred_row.append(str(prediction[idx].item()))
+            sol_row.append(str(solution[idx].item()))
+        sep = lambda row, c: " | " if (c+1) % 3 == 0 and c != 8 else " "
+        fmt = lambda row: "".join(row[i] + sep(row, i) for i in range(9))
+        print(f"{fmt(p_row):27}   {fmt(pred_row):27}   {fmt(sol_row):27}")
+        if r in [2, 5]:
+            print("-" * 89)
+
+print("\n── Failed puzzle examples ──")
+for i, ex in enumerate(failed_puzzles[:3]):
+    print(f"\nExample {i+1}:")
+    display_comparison(ex['puzzle'], ex['prediction'], ex['solution'])
